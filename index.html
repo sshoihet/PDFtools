@@ -54,9 +54,19 @@
             
             <!-- Scrollable Viewport -->
             <div id="canvasViewport">
-                <div id="canvasWrapper">
+                <!-- Canvas Wrapper -->
+                <div id="canvasWrapper" style="display: none;">
                     <canvas id="pdfCanvas"></canvas>
-                    <div id="selectionBox"></div>
+                    <div id="selectionBox">
+                        <div class="handle handle-nw" data-handle="nw"></div>
+                        <div class="handle handle-n"  data-handle="n"></div>
+                        <div class="handle handle-ne" data-handle="ne"></div>
+                        <div class="handle handle-e"  data-handle="e"></div>
+                        <div class="handle handle-se" data-handle="se"></div>
+                        <div class="handle handle-s"  data-handle="s"></div>
+                        <div class="handle handle-sw" data-handle="sw"></div>
+                        <div class="handle handle-w"  data-handle="w"></div>
+                    </div>
                 </div>
             </div>
         </div>
