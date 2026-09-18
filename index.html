@@ -7,18 +7,20 @@
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="style.css">
     
-<!-- PDF Rendering & Manipulation Engines (CDNJS) -->
+    <!-- PDF Rendering & Manipulation Engines -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.9/pdf-lib.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.9/dist/pdf-lib.min.js"></script>
 </head>
 <body>
 
+    <!-- STANDARD UTILITY CONTAINER (Merge / Split) -->
     <div class="container">
+        <!-- MODE SWITCH -->
         <div class="controls">
             <div class="mode-switch">
-                <button id="btnModeMerge" class="mode-btn active">MERGE MODE</button>
-                <button id="btnModeSplit" class="mode-btn">SPLIT MODE</button>
-                <button id="btnModeForm" class="mode-btn">FIELD EDITOR</button>
+                <button id="btnModeMerge" class="mode-btn active" type="button">MERGE MODE</button>
+                <button id="btnModeSplit" class="mode-btn" type="button">SPLIT MODE</button>
+                <button id="btnModeForm" class="mode-btn" type="button">FIELD EDITOR</button>
             </div>
             
             <div id="splitControls" style="display:none; margin-top: 10px;">
@@ -26,6 +28,7 @@
             </div>
         </div>
 
+        <!-- DROP ZONE -->
         <div id="dropZone" class="drop-zone">
             <h3>DROP PDFS HERE</h3>
             <p style="color: #8b949e">or click to browse</p>
@@ -34,54 +37,70 @@
 
         <!-- FILE LIST -->
         <div id="fileList" class="file-list">
-            <!-- Items injected by JS -->
-        </div>
-
-        <!-- FORM FIELD WORKSPACE -->
-        <div id="formWorkspace" style="display: none; margin-top: 20px;">
-            <div style="display: flex; gap: 10px; margin-bottom: 12px; justify-content: center; align-items: center; flex-wrap: wrap;">
-                <input type="text" id="fieldNameInput" placeholder="Field Name (e.g., Customer_Project)" style="padding: 8px; background: var(--surface); border: 1px solid var(--border); color: white; border-radius: 4px; font-family: var(--mono); width: 220px;">
-                
-                <!-- Zoom Controls -->
-                <div class="zoom-controls">
-                    <button id="btnZoomOut" class="mode-btn" type="button" title="Zoom Out">−</button>
-                    <span id="zoomLabel">100%</span>
-                    <button id="btnZoomIn" class="mode-btn" type="button" title="Zoom In">+</button>
-                </div>
-
-                <button id="btnApplyField" class="mode-btn" style="background: var(--accent); color: white; border-color: var(--accent);">INJECT FIELD</button>
-            </div>
-            
-            <!-- Scrollable Viewport -->
-            <div id="canvasViewport">
-                <!-- Canvas Wrapper -->
-                <div id="canvasWrapper" style="display: none;">
-                    <canvas id="pdfCanvas"></canvas>
-                    <div id="selectionBox">
-                        <div class="handle handle-nw" data-handle="nw"></div>
-                        <div class="handle handle-n"  data-handle="n"></div>
-                        <div class="handle handle-ne" data-handle="ne"></div>
-                        <div class="handle handle-e"  data-handle="e"></div>
-                        <div class="handle handle-se" data-handle="se"></div>
-                        <div class="handle handle-s"  data-handle="s"></div>
-                        <div class="handle handle-sw" data-handle="sw"></div>
-                        <div class="handle handle-w"  data-handle="w"></div>
-                    </div>
-                </div>
-            </div>
+            <!-- Injected by JS -->
         </div>
 
         <!-- ACTION BUTTON -->
-        <button id="mergeBtn" class="btn-merge">SYSTEM INITIALIZING...</button>
+        <button id="mergeBtn" class="btn-merge" type="button">SYSTEM INITIALIZING...</button>
 
-        <!-- LOGS -->
+        <!-- STATUS LOGS -->
         <div id="statusBar" class="status-bar">
             > SYSTEM: Booting Web Worker...
         </div>
     </div>
 
+    <!-- FULL-SCREEN FIELD EDITOR STUDIO -->
+    <div id="formWorkspace" class="editor-fullscreen" style="display: none;">
+        <!-- Sticky Top Toolbar -->
+        <div class="editor-topbar">
+            <div class="topbar-left">
+                <button id="btnExitEditor" class="mode-btn" type="button">← EXIT TO MERGE/SPLIT</button>
+                <span class="editor-title">FIELD EDITOR</span>
+            </div>
+
+            <div class="topbar-center">
+                <input type="text" id="fieldNameInput" placeholder="Field Name (e.g., Customer_Project)" autocomplete="off">
+                <div class="zoom-controls">
+                    <button id="btnZoomOut" class="mode-btn" type="button" title="Zoom Out">−</button>
+                    <span id="zoomLabel">200%</span>
+                    <button id="btnZoomIn" class="mode-btn" type="button" title="Zoom In">+</button>
+                </div>
+            </div>
+
+            <div class="topbar-right">
+                <button id="btnApplyField" class="mode-btn btn-inject" type="button">INJECT FIELD</button>
+            </div>
+        </div>
+
+        <!-- Full-Page Scrollable Viewport -->
+        <div id="canvasViewport" class="editor-viewport">
+            <!-- Dedicated Drop Target for Editor -->
+            <div id="editorDropZone" class="editor-dropzone">
+                <div class="drop-zone-content">
+                    <h3>DROP PLACARD PDF HERE</h3>
+                    <p style="color: #8b949e;">or click to browse</p>
+                </div>
+                <input type="file" id="editorFileInput" accept=".pdf" style="display: none;">
+            </div>
+
+            <!-- Canvas Wrapper with 8 Handles -->
+            <div id="canvasWrapper" style="display: none;">
+                <canvas id="pdfCanvas"></canvas>
+                <div id="selectionBox">
+                    <div class="handle handle-nw" data-handle="nw"></div>
+                    <div class="handle handle-n"  data-handle="n"></div>
+                    <div class="handle handle-ne" data-handle="ne"></div>
+                    <div class="handle handle-e"  data-handle="e"></div>
+                    <div class="handle handle-se" data-handle="se"></div>
+                    <div class="handle handle-s"  data-handle="s"></div>
+                    <div class="handle handle-sw" data-handle="sw"></div>
+                    <div class="handle handle-w"  data-handle="w"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN CONTROLLER SCRIPT -->
     <script type="module" src="./main.js"></script>
 </body>
 </html>
-
-
