@@ -18,6 +18,7 @@
             <div class="mode-switch">
                 <button id="btnModeMerge" class="mode-btn active">MERGE MODE</button>
                 <button id="btnModeSplit" class="mode-btn">SPLIT MODE</button>
+                <button id="btnModeForm" class="mode-btn">FIELD EDITOR</button>
             </div>
             
             <div id="splitControls" style="display:none; margin-top: 10px;">
@@ -31,14 +32,28 @@
             <input type="file" id="fileInput" multiple accept=".pdf" style="display:none">
         </div>
 
+        <!-- FILE LIST -->
         <div id="fileList" class="file-list">
-            </div>
+            <!-- Items injected by JS -->
+        </div>
 
-            <div style="display: flex; gap: 10px; margin-top: 20px;">
-                <button id="mergeBtn" class="btn-merge" style="flex-grow: 1;">SYSTEM INITIALIZING...</button>
-                <button id="clearBtn" class="mode-btn" style="border-color: #f85149; color: #f85149; display: none;">CLEAR ALL</button>
+        <!-- FORM FIELD WORKSPACE -->
+        <div id="formWorkspace" style="display: none; margin-top: 20px;">
+            <div style="display: flex; gap: 10px; margin-bottom: 12px; justify-content: center;">
+                <input type="text" id="fieldNameInput" placeholder="Field Name (e.g., Customer_Project)" style="padding: 8px; background: var(--surface); border: 1px solid var(--border); color: white; border-radius: 4px; font-family: var(--mono); width: 280px;">
+                <button id="btnApplyField" class="mode-btn" style="background: var(--accent); color: white; border-color: var(--accent);">INJECT FIELD</button>
             </div>
+            
+            <div id="canvasContainer" style="position: relative; display: inline-block; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; background: #000;">
+                <canvas id="pdfCanvas" style="display: block;"></canvas>
+                <div id="selectionBox" style="position: absolute; border: 2px dashed #238636; background: rgba(35, 134, 54, 0.25); display: none; pointer-events: none;"></div>
+            </div>
+        </div>
 
+        <!-- ACTION BUTTON -->
+        <button id="mergeBtn" class="btn-merge">SYSTEM INITIALIZING...</button>
+
+        <!-- LOGS -->
         <div id="statusBar" class="status-bar">
             > SYSTEM: Booting Web Worker...
         </div>
