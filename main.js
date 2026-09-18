@@ -68,30 +68,21 @@ if (window.pdfjsLib) {
         'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
 
-// Resilient Multi-CDN Loader for pdf-lib
+// Local Loader for pdf-lib
 async function getPDFLib() {
     if (window.PDFLib) return window.PDFLib;
 
-    const sources = [
-        'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.9/dist/pdf-lib.min.js',
-        'https://unpkg.com/pdf-lib@1.17.9/dist/pdf-lib.min.js'
-    ];
-
-    for (const src of sources) {
-        try {
-            await new Promise((resolve, reject) => {
-                const s = document.createElement('script');
-                s.src = src;
-                s.onload = resolve;
-                s.onerror = reject;
-                document.head.appendChild(s);
-            });
-            if (window.PDFLib) return window.PDFLib;
-        } catch (e) {
-            console.warn(`Failed loading pdf-lib from ${src}`);
-        }
-    }
-    throw new Error("Unable to load pdf-lib from any CDN. Please check network/ad blockers.");
+    // Fallback: Dynamically load local file if head tag didn't resolve in time
+    return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = './pdf-lib.min.js';
+        s.onload = () => {
+            if (window.PDFLib) resolve(window.PDFLib);
+            else reject(new Error("Local pdf-lib.min.js loaded but PDFLib global not found."));
+        };
+        s.onerror = () => reject(new Error("Failed to load ./pdf-lib.min.js. Ensure the file is present in your repo root."));
+        document.head.appendChild(s);
+    });
 }
 
 // --- WORKER EVENT LISTENER (Merge / Split) ---
