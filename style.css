@@ -220,3 +220,29 @@ body {
     opacity: 1;
     pointer-events: auto;
 }
+
+/* --- FIELD EDITOR WORKSPACE --- */
+#canvasContainer {
+    position: relative;
+    display: inline-block;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: #000;
+    cursor: crosshair;
+    margin-top: 10px;
+    max-width: 100%;
+}
+
+#pdfCanvas {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}
+
+#selectionBox {
+    position: absolute;
+    border: 2px dashed var(--accent);
+    background: rgba(35, 134, 54, 0.25);
+    display: none;
+    pointer-events: none;
+}
