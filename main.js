@@ -18,18 +18,22 @@ const jobNameInput = document.getElementById('jobNameInput');
 const formWorkspace = document.getElementById('formWorkspace');
 const fieldNameInput = document.getElementById('fieldNameInput');
 const btnApplyField = document.getElementById('btnApplyField');
+const btnZoomIn = document.getElementById('btnZoomIn');
+const btnZoomOut = document.getElementById('btnZoomOut');
+const zoomLabel = document.getElementById('zoomLabel');
 const canvas = document.getElementById('pdfCanvas');
 const selectionBox = document.getElementById('selectionBox');
 
 // --- APP STATE ---
 let selectedFiles = [];
-let appMode = 'MERGE'; // 'MERGE' | 'SPLIT' | 'FORM'
+let appMode = 'MERGE';
 let dragStartIndex;
 
-// Form Editor State
+// Form Editor & Zoom State
 let rawFormPdfBuffer = null;
-let currentRenderScale = 1.0;
-let pdfPageHeightPoints = 0;
+let currentZoom = 1.0; // Multiplier: 1.0 = 100%, 1.5 = 150%, 2.0 = 200%
+let baseRenderScale = 1.0;
+let totalRenderScale = 1.0;
 let isDrawing = false;
 let startX = 0;
 let startY = 0;
@@ -77,10 +81,10 @@ function setMode(mode) {
     appMode = mode;
     selectedFiles = [];
     rawFormPdfBuffer = null;
+    currentZoom = 1.0;
     renderFileList();
     resetCanvas();
 
-    // Toggle button styles
     btnModeMerge.classList.toggle('active', mode === 'MERGE');
     btnModeSplit.classList.toggle('active', mode === 'SPLIT');
     btnModeForm.classList.toggle('active', mode === 'FORM');
@@ -91,6 +95,7 @@ function setMode(mode) {
         mergeBtn.style.display = 'none';
         formWorkspace.style.display = 'block';
         statusBar.innerText = `> SYSTEM: FIELD EDITOR ACTIVE. DROP A PLACARD PDF TO BEGIN.`;
+        statusBar.style.color = '#58a6ff';
     } else if (mode === 'SPLIT') {
         splitControls.style.display = 'block';
         fileList.style.display = 'block';
@@ -129,7 +134,8 @@ async function handleFiles(fileListObj) {
     if (appMode === 'FORM') {
         const file = newFiles[0];
         rawFormPdfBuffer = await file.arrayBuffer();
-        await renderPdfToCanvas(rawFormPdfBuffer.slice(0));
+        currentZoom = 1.0;
+        await renderPdfToCanvas();
         statusBar.innerText = `> SYSTEM: LOADED ${file.name}. DRAG A BOX OVER THE FIELD AREA.`;
         statusBar.style.color = '#58a6ff';
     } else if (appMode === 'SPLIT') {
@@ -142,19 +148,26 @@ async function handleFiles(fileListObj) {
 }
 
 // --- CANVAS RENDERING (PDF.js) ---
-async function renderPdfToCanvas(arrayBuffer) {
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+async function renderPdfToCanvas() {
+    if (!rawFormPdfBuffer) return;
+
+    // Reset current box on zoom change to avoid scaling mismatch
+    selectionBox.style.display = 'none';
+    boxCoords = { left: 0, top: 0, width: 0, height: 0 };
+    zoomLabel.innerText = `${Math.round(currentZoom * 100)}%`;
+
+    const loadingTask = pdfjsLib.getDocument({ data: rawFormPdfBuffer.slice(0) });
     const pdf = await loadingTask.promise;
     const page = await pdf.getPage(1);
 
-    // Target a width that fits inside the 600px UI container with padding
     const unscaledViewport = page.getViewport({ scale: 1.0 });
-    pdfPageHeightPoints = unscaledViewport.height;
+    
+    // Fit width to standard 560px baseline
+    const baseWidth = Math.min(560, window.innerWidth - 80);
+    baseRenderScale = baseWidth / unscaledViewport.width;
+    totalRenderScale = baseRenderScale * currentZoom;
 
-    const targetWidth = Math.min(560, window.innerWidth - 60);
-    currentRenderScale = targetWidth / unscaledViewport.width;
-
-    const viewport = page.getViewport({ scale: currentRenderScale });
+    const viewport = page.getViewport({ scale: totalRenderScale });
     canvas.width = viewport.width;
     canvas.height = viewport.height;
 
@@ -168,6 +181,19 @@ function resetCanvas() {
     selectionBox.style.display = 'none';
     boxCoords = { left: 0, top: 0, width: 0, height: 0 };
 }
+
+// --- ZOOM CONTROLS ---
+btnZoomIn.addEventListener('click', async () => {
+    if (!rawFormPdfBuffer || currentZoom >= 3.0) return;
+    currentZoom = +(currentZoom + 0.25).toFixed(2);
+    await renderPdfToCanvas();
+});
+
+btnZoomOut.addEventListener('click', async () => {
+    if (!rawFormPdfBuffer || currentZoom <= 0.5) return;
+    currentZoom = +(currentZoom - 0.25).toFixed(2);
+    await renderPdfToCanvas();
+});
 
 // --- INTERACTIVE BOUNDING BOX (Mouse Drag) ---
 canvas.addEventListener('mousedown', (e) => {
@@ -218,23 +244,27 @@ btnApplyField.addEventListener('click', async () => {
         return;
     }
 
+    const lib = window.PDFLib;
+    if (!lib) {
+        alert("PDFLib library failed to load from CDN. Please check your network or ad blocker.");
+        return;
+    }
+
     try {
         statusBar.innerText = `> SYSTEM: INJECTING ACROFORM FIELD...`;
         statusBar.style.color = '#58a6ff';
 
-        // Translate Screen Pixels -> Inverted PDF Points
-        const pdfX = boxCoords.left / currentRenderScale;
-        const pdfWidth = boxCoords.width / currentRenderScale;
-        const pdfHeight = boxCoords.height / currentRenderScale;
-        const pdfY = (canvas.height - (boxCoords.top + boxCoords.height)) / currentRenderScale;
+        // Translate Screen Pixels -> Unscaled PDF Points
+        const pdfX = boxCoords.left / totalRenderScale;
+        const pdfWidth = boxCoords.width / totalRenderScale;
+        const pdfHeight = boxCoords.height / totalRenderScale;
+        const pdfY = (canvas.height - (boxCoords.top + boxCoords.height)) / totalRenderScale;
 
-        // Load document into pdf-lib
-        const { PDFDocument, rgb } = PDFLib;
+        const { PDFDocument, rgb } = lib;
         const pdfDoc = await PDFDocument.load(rawFormPdfBuffer.slice(0));
         const page = pdfDoc.getPages()[0];
         const form = pdfDoc.getForm();
 
-        // Unique or custom field name
         const rawName = fieldNameInput.value.trim() || `Field_${Date.now()}`;
         const cleanName = rawName.replace(/[^a-zA-Z0-9_]/g, '_');
 
@@ -249,14 +279,12 @@ btnApplyField.addEventListener('click', async () => {
         });
         textField.setFontSize(10);
 
-        // Serialize and trigger download
         const modifiedPdfBytes = await pdfDoc.save();
         triggerDownload(modifiedPdfBytes, `${cleanName}_form.pdf`);
 
-        statusBar.innerText = `> SYSTEM: FIELD INJECTED SUCCESSFULLY. FILE DOWNLOADED.`;
+        statusBar.innerText = `> SYSTEM: FIELD INJECTED. FILE DOWNLOADED.`;
         statusBar.style.color = '#238636';
 
-        // Clear selection box
         selectionBox.style.display = 'none';
         boxCoords = { left: 0, top: 0, width: 0, height: 0 };
     } catch (err) {
