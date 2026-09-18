@@ -1,6 +1,7 @@
 import { merger } from './pdf.engine.js';
 
 // --- DOM ELEMENTS ---
+const mainContainer = document.querySelector('.container');
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
 const fileList = document.getElementById('fileList');
@@ -34,10 +35,13 @@ let selectedFiles = [];
 let appMode = 'MERGE';
 let dragStartIndex;
 
-// PDF & Render State
+// Cached PDF Objects (Prevents re-parsing on zoom)
 let rawFormPdfBuffer = null;
+let loadedPdfDoc = null;
+let loadedPdfPage = null;
+
 let currentZoom = 2.0;
-let totalRenderScale = 2.0;
+let totalRenderScale = 0;
 let currentRenderTask = null;
 
 // Interaction State Machine
@@ -64,13 +68,30 @@ if (window.pdfjsLib) {
         'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
 
+// Resilient Multi-CDN Loader for pdf-lib
 async function getPDFLib() {
     if (window.PDFLib) return window.PDFLib;
-    try {
-        return await import('https://cdn.jsdelivr.net/npm/pdf-lib@1.17.9/+esm');
-    } catch (e) {
-        throw new Error("Failed to load pdf-lib.");
+
+    const sources = [
+        'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.9/dist/pdf-lib.min.js',
+        'https://unpkg.com/pdf-lib@1.17.9/dist/pdf-lib.min.js'
+    ];
+
+    for (const src of sources) {
+        try {
+            await new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = src;
+                s.onload = resolve;
+                s.onerror = reject;
+                document.head.appendChild(s);
+            });
+            if (window.PDFLib) return window.PDFLib;
+        } catch (e) {
+            console.warn(`Failed loading pdf-lib from ${src}`);
+        }
     }
+    throw new Error("Unable to load pdf-lib from any CDN. Please check network/ad blockers.");
 }
 
 // --- WORKER EVENT LISTENER (Merge / Split) ---
@@ -109,20 +130,23 @@ function setMode(mode) {
     appMode = mode;
     selectedFiles = [];
     rawFormPdfBuffer = null;
+    cleanupPdfDoc();
     currentZoom = 2.0;
     renderFileList();
     resetCanvas();
 
-    btnModeMerge.classList.toggle('active', mode === 'MERGE');
-    btnModeSplit.classList.toggle('active', mode === 'SPLIT');
-    btnModeForm.classList.toggle('active', mode === 'FORM');
+    if (btnModeMerge) btnModeMerge.classList.toggle('active', mode === 'MERGE');
+    if (btnModeSplit) btnModeSplit.classList.toggle('active', mode === 'SPLIT');
+    if (btnModeForm) btnModeForm.classList.toggle('active', mode === 'FORM');
 
     if (mode === 'FORM') {
+        if (mainContainer) mainContainer.style.display = 'none';
         formWorkspace.style.display = 'flex';
         editorDropZone.style.display = 'block';
         canvasWrapper.style.display = 'none';
         zoomLabel.innerText = '200%';
     } else {
+        if (mainContainer) mainContainer.style.display = 'block';
         formWorkspace.style.display = 'none';
         splitControls.style.display = (mode === 'SPLIT') ? 'block' : 'none';
         fileList.style.display = 'block';
@@ -131,10 +155,10 @@ function setMode(mode) {
     }
 }
 
-btnModeMerge.onclick = () => setMode('MERGE');
-btnModeSplit.onclick = () => setMode('SPLIT');
-btnModeForm.onclick = () => setMode('FORM');
-btnExitEditor.onclick = () => setMode('MERGE');
+if (btnModeMerge) btnModeMerge.onclick = () => setMode('MERGE');
+if (btnModeSplit) btnModeSplit.onclick = () => setMode('SPLIT');
+if (btnModeForm) btnModeForm.onclick = () => setMode('FORM');
+if (btnExitEditor) btnExitEditor.onclick = () => setMode('MERGE');
 
 // --- FILE INPUT HANDLING ---
 dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
@@ -173,21 +197,44 @@ async function handleFiles(fileListObj) {
 
 async function handleFormFile(file) {
     if (!file || file.type !== 'application/pdf') return;
+
+    cleanupPdfDoc();
     rawFormPdfBuffer = await file.arrayBuffer();
     currentZoom = 2.0;
 
     editorDropZone.style.display = 'none';
     canvasWrapper.style.display = 'block';
 
-    await renderPdfToCanvas();
+    // Parse document once and cache the reference
+    const loadingTask = pdfjsLib.getDocument({ data: rawFormPdfBuffer.slice(0) });
+    loadedPdfDoc = await loadingTask.promise;
+    loadedPdfPage = await loadedPdfDoc.getPage(1);
+
+    totalRenderScale = (96 / 72) * currentZoom;
+    await renderCachedPage();
 }
 
-// --- CANVAS RENDERING (With Box Scale Preservation) ---
-async function renderPdfToCanvas() {
-    if (!rawFormPdfBuffer) return;
+function cleanupPdfDoc() {
+    if (loadedPdfDoc) {
+        loadedPdfDoc.destroy();
+        loadedPdfDoc = null;
+        loadedPdfPage = null;
+    }
+}
 
+// --- FAST CANVAS RENDERING (Zero Re-Parsing) ---
+async function renderCachedPage() {
+    if (!loadedPdfPage) return;
+
+    // Properly await previous render task cancellation to prevent context collisions
     if (currentRenderTask) {
         currentRenderTask.cancel();
+        try {
+            await currentRenderTask.promise;
+        } catch (e) {
+            // Expected RenderingCancelledException
+        }
+        currentRenderTask = null;
     }
 
     btnZoomIn.disabled = true;
@@ -197,7 +244,7 @@ async function renderPdfToCanvas() {
     const oldScale = totalRenderScale;
     const newScale = (96 / 72) * currentZoom;
 
-    // Rescale selection box if it exists
+    // Scale existing selection box proportionately
     if (boxCoords.width > 0 && oldScale > 0) {
         const scaleFactor = newScale / oldScale;
         boxCoords.left *= scaleFactor;
@@ -210,11 +257,7 @@ async function renderPdfToCanvas() {
     totalRenderScale = newScale;
 
     try {
-        const loadingTask = pdfjsLib.getDocument({ data: rawFormPdfBuffer.slice(0) });
-        const pdf = await loadingTask.promise;
-        const page = await pdf.getPage(1);
-
-        const viewport = page.getViewport({ scale: totalRenderScale });
+        const viewport = loadedPdfPage.getViewport({ scale: totalRenderScale });
         canvas.width = viewport.width;
         canvas.height = viewport.height;
 
@@ -222,7 +265,7 @@ async function renderPdfToCanvas() {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        currentRenderTask = page.render({ canvasContext: ctx, viewport: viewport });
+        currentRenderTask = loadedPdfPage.render({ canvasContext: ctx, viewport: viewport });
         await currentRenderTask.promise;
     } catch (err) {
         if (err.name !== 'RenderingCancelledException') {
@@ -245,22 +288,23 @@ function resetCanvas() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     selectionBox.style.display = 'none';
     boxCoords = { left: 0, top: 0, width: 0, height: 0 };
+    totalRenderScale = 0;
 }
 
 // --- ZOOM BUTTON CONTROLS ---
 btnZoomIn.addEventListener('click', async () => {
-    if (!rawFormPdfBuffer || currentZoom >= 3.0 || currentRenderTask) return;
+    if (!loadedPdfPage || currentZoom >= 3.0) return;
     currentZoom = +(currentZoom + 0.25).toFixed(2);
-    await renderPdfToCanvas();
+    await renderCachedPage();
 });
 
 btnZoomOut.addEventListener('click', async () => {
-    if (!rawFormPdfBuffer || currentZoom <= 0.5 || currentRenderTask) return;
+    if (!loadedPdfPage || currentZoom <= 0.5) return;
     currentZoom = +(currentZoom - 0.25).toFixed(2);
-    await renderPdfToCanvas();
+    await renderCachedPage();
 });
 
-// --- PANNING LOGIC (Spacebar + Drag OR Middle-Click) ---
+// --- PANNING LOGIC ---
 window.addEventListener('keydown', (e) => {
     if (e.code === 'Space' && !e.repeat && document.activeElement !== fieldNameInput) {
         isSpacePressed = true;
@@ -278,11 +322,10 @@ window.addEventListener('keyup', (e) => {
     }
 });
 
-// --- UNIFIED CANVAS & BOX POINTER EVENTS ---
+// --- CANVAS & TRANSFORM EVENTS ---
 canvasViewport.addEventListener('mousedown', (e) => {
-    if (!rawFormPdfBuffer) return;
+    if (!loadedPdfPage) return;
 
-    // Mode: Viewport Panning (Spacebar or Middle Click)
     if (isSpacePressed || e.button === 1) {
         currentMode = InteractionMode.PANNING;
         panStart = {
@@ -296,7 +339,7 @@ canvasViewport.addEventListener('mousedown', (e) => {
         return;
     }
 
-    if (e.button !== 0) return; // Only process left-clicks below
+    if (e.button !== 0) return;
 
     const handleEl = e.target.closest('.handle');
     const isBoxClick = e.target === selectionBox;
@@ -306,16 +349,13 @@ canvasViewport.addEventListener('mousedown', (e) => {
     origBox = { ...boxCoords };
 
     if (handleEl) {
-        // Mode: Resizing Box via Handle
         currentMode = InteractionMode.RESIZING;
         activeHandle = handleEl.dataset.handle;
         e.stopPropagation();
     } else if (isBoxClick) {
-        // Mode: Moving Box
         currentMode = InteractionMode.MOVING;
         e.stopPropagation();
     } else if (e.target === canvas) {
-        // Mode: Drawing Brand New Box
         currentMode = InteractionMode.DRAWING;
         const startX = Math.max(0, Math.min(e.clientX - canvasRect.left, canvas.width));
         const startY = Math.max(0, Math.min(e.clientY - canvasRect.top, canvas.height));
@@ -328,7 +368,6 @@ canvasViewport.addEventListener('mousedown', (e) => {
 window.addEventListener('mousemove', (e) => {
     if (currentMode === InteractionMode.IDLE) return;
 
-    // Handle Viewport Panning
     if (currentMode === InteractionMode.PANNING) {
         const dx = e.clientX - panStart.x;
         const dy = e.clientY - panStart.y;
@@ -343,23 +382,16 @@ window.addEventListener('mousemove', (e) => {
     const minSize = 12;
 
     if (currentMode === InteractionMode.MOVING) {
-        // Clamp Translation to Canvas Bounds
         const maxLeft = canvas.width - origBox.width;
         const maxTop = canvas.height - origBox.height;
         boxCoords.left = Math.max(0, Math.min(origBox.left + dx, maxLeft));
         boxCoords.top = Math.max(0, Math.min(origBox.top + dy, maxTop));
         updateSelectionBoxDOM();
-    } 
-    else if (currentMode === InteractionMode.RESIZING) {
+    } else if (currentMode === InteractionMode.RESIZING) {
         let { left, top, width, height } = origBox;
 
-        // Directional delta mapping
-        if (activeHandle.includes('e')) {
-            width = Math.max(minSize, Math.min(origBox.width + dx, canvas.width - left));
-        }
-        if (activeHandle.includes('s')) {
-            height = Math.max(minSize, Math.min(origBox.height + dy, canvas.height - top));
-        }
+        if (activeHandle.includes('e')) width = Math.max(minSize, Math.min(origBox.width + dx, canvas.width - left));
+        if (activeHandle.includes('s')) height = Math.max(minSize, Math.min(origBox.height + dy, canvas.height - top));
         if (activeHandle.includes('w')) {
             const proposedLeft = Math.max(0, Math.min(origBox.left + dx, origBox.left + origBox.width - minSize));
             width = origBox.width - (proposedLeft - origBox.left);
@@ -373,8 +405,7 @@ window.addEventListener('mousemove', (e) => {
 
         boxCoords = { left, top, width, height };
         updateSelectionBoxDOM();
-    } 
-    else if (currentMode === InteractionMode.DRAWING) {
+    } else if (currentMode === InteractionMode.DRAWING) {
         const currentX = Math.max(0, Math.min(e.clientX - canvasRect.left, canvas.width));
         const currentY = Math.max(0, Math.min(e.clientY - canvasRect.top, canvas.height));
 
@@ -400,7 +431,6 @@ window.addEventListener('mouseup', () => {
     }
 
     if (currentMode === InteractionMode.DRAWING) {
-        // Clean up accidental clicks
         if (boxCoords.width < 10 || boxCoords.height < 10) {
             selectionBox.style.display = 'none';
             boxCoords = { left: 0, top: 0, width: 0, height: 0 };
@@ -419,7 +449,7 @@ function updateSelectionBoxDOM() {
     selectionBox.style.display = 'block';
 }
 
-// --- ACROFORM INJECTION (pdf-lib) ---
+// --- ACROFORM INJECTION ---
 btnApplyField.addEventListener('click', async () => {
     if (!rawFormPdfBuffer) {
         alert("Please load a PDF document first.");
@@ -433,7 +463,6 @@ btnApplyField.addEventListener('click', async () => {
     try {
         const lib = await getPDFLib();
 
-        // Screen Pixels -> Unscaled Inverted PDF Points
         const pdfX = boxCoords.left / totalRenderScale;
         const pdfWidth = boxCoords.width / totalRenderScale;
         const pdfHeight = boxCoords.height / totalRenderScale;
