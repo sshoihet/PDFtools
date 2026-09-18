@@ -7,15 +7,20 @@ const fileList = document.getElementById('fileList');
 const mergeBtn = document.getElementById('mergeBtn');
 const statusBar = document.getElementById('statusBar');
 
-// Mode Switch Elements
+// Mode Switch
 const btnModeMerge = document.getElementById('btnModeMerge');
 const btnModeSplit = document.getElementById('btnModeSplit');
 const btnModeForm = document.getElementById('btnModeForm');
 const splitControls = document.getElementById('splitControls');
 const jobNameInput = document.getElementById('jobNameInput');
 
-// Form Workspace Elements
+// Full-Page Editor
 const formWorkspace = document.getElementById('formWorkspace');
+const btnExitEditor = document.getElementById('btnExitEditor');
+const editorDropZone = document.getElementById('editorDropZone');
+const editorFileInput = document.getElementById('editorFileInput');
+const canvasViewport = document.getElementById('canvasViewport');
+const canvasWrapper = document.getElementById('canvasWrapper');
 const fieldNameInput = document.getElementById('fieldNameInput');
 const btnApplyField = document.getElementById('btnApplyField');
 const btnZoomIn = document.getElementById('btnZoomIn');
@@ -29,20 +34,43 @@ let selectedFiles = [];
 let appMode = 'MERGE';
 let dragStartIndex;
 
-// Form Editor & Zoom State
+// PDF & Render State
 let rawFormPdfBuffer = null;
-let currentZoom = 1.0; // Multiplier: 1.0 = 100%, 1.5 = 150%, 2.0 = 200%
-let baseRenderScale = 1.0;
-let totalRenderScale = 1.0;
-let isDrawing = false;
-let startX = 0;
-let startY = 0;
+let currentZoom = 2.0;
+let totalRenderScale = 2.0;
+let currentRenderTask = null;
+
+// Interaction State Machine
+const InteractionMode = {
+    IDLE: 'IDLE',
+    DRAWING: 'DRAWING',
+    MOVING: 'MOVING',
+    RESIZING: 'RESIZING',
+    PANNING: 'PANNING'
+};
+let currentMode = InteractionMode.IDLE;
+let isSpacePressed = false;
+
+// Geometry Buffers
 let boxCoords = { left: 0, top: 0, width: 0, height: 0 };
+let origBox = { left: 0, top: 0, width: 0, height: 0 };
+let dragStart = { x: 0, y: 0 };
+let activeHandle = null;
+let panStart = { x: 0, y: 0, scrollLeft: 0, scrollTop: 0 };
 
 // PDF.js Worker Configuration
 if (window.pdfjsLib) {
     pdfjsLib.GlobalWorkerOptions.workerSrc = 
         'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+async function getPDFLib() {
+    if (window.PDFLib) return window.PDFLib;
+    try {
+        return await import('https://cdn.jsdelivr.net/npm/pdf-lib@1.17.9/+esm');
+    } catch (e) {
+        throw new Error("Failed to load pdf-lib.");
+    }
 }
 
 // --- WORKER EVENT LISTENER (Merge / Split) ---
@@ -81,7 +109,7 @@ function setMode(mode) {
     appMode = mode;
     selectedFiles = [];
     rawFormPdfBuffer = null;
-    currentZoom = 1.0;
+    currentZoom = 2.0;
     renderFileList();
     resetCanvas();
 
@@ -90,23 +118,15 @@ function setMode(mode) {
     btnModeForm.classList.toggle('active', mode === 'FORM');
 
     if (mode === 'FORM') {
-        splitControls.style.display = 'none';
-        fileList.style.display = 'none';
-        mergeBtn.style.display = 'none';
-        formWorkspace.style.display = 'block';
-        statusBar.innerText = `> SYSTEM: FIELD EDITOR ACTIVE. DROP A PLACARD PDF TO BEGIN.`;
-        statusBar.style.color = '#58a6ff';
-    } else if (mode === 'SPLIT') {
-        splitControls.style.display = 'block';
-        fileList.style.display = 'block';
-        mergeBtn.style.display = 'block';
-        formWorkspace.style.display = 'none';
-        checkReadyState();
+        formWorkspace.style.display = 'flex';
+        editorDropZone.style.display = 'block';
+        canvasWrapper.style.display = 'none';
+        zoomLabel.innerText = '200%';
     } else {
-        splitControls.style.display = 'none';
+        formWorkspace.style.display = 'none';
+        splitControls.style.display = (mode === 'SPLIT') ? 'block' : 'none';
         fileList.style.display = 'block';
         mergeBtn.style.display = 'block';
-        formWorkspace.style.display = 'none';
         checkReadyState();
     }
 }
@@ -114,6 +134,7 @@ function setMode(mode) {
 btnModeMerge.onclick = () => setMode('MERGE');
 btnModeSplit.onclick = () => setMode('SPLIT');
 btnModeForm.onclick = () => setMode('FORM');
+btnExitEditor.onclick = () => setMode('MERGE');
 
 // --- FILE INPUT HANDLING ---
 dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
@@ -127,111 +148,276 @@ dropZone.addEventListener('drop', (e) => {
     handleFiles(e.dataTransfer.files);
 });
 
+editorDropZone.addEventListener('dragover', (e) => { e.preventDefault(); });
+editorDropZone.addEventListener('click', () => editorFileInput.click());
+editorFileInput.addEventListener('change', (e) => handleFormFile(e.target.files[0]));
+
+editorDropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.files.length > 0) {
+        handleFormFile(e.dataTransfer.files[0]);
+    }
+});
+
 async function handleFiles(fileListObj) {
     const newFiles = Array.from(fileListObj).filter(f => f.type === 'application/pdf');
     if (newFiles.length === 0) return;
 
-    if (appMode === 'FORM') {
-        const file = newFiles[0];
-        rawFormPdfBuffer = await file.arrayBuffer();
-        currentZoom = 1.0;
-        await renderPdfToCanvas();
-        statusBar.innerText = `> SYSTEM: LOADED ${file.name}. DRAG A BOX OVER THE FIELD AREA.`;
-        statusBar.style.color = '#58a6ff';
-    } else if (appMode === 'SPLIT') {
+    if (appMode === 'SPLIT') {
         selectedFiles = [newFiles[0]];
-        renderFileList();
     } else {
         selectedFiles = [...selectedFiles, ...newFiles];
-        renderFileList();
     }
+    renderFileList();
 }
 
-// --- CANVAS RENDERING (PDF.js) ---
+async function handleFormFile(file) {
+    if (!file || file.type !== 'application/pdf') return;
+    rawFormPdfBuffer = await file.arrayBuffer();
+    currentZoom = 2.0;
+
+    editorDropZone.style.display = 'none';
+    canvasWrapper.style.display = 'block';
+
+    await renderPdfToCanvas();
+}
+
+// --- CANVAS RENDERING (With Box Scale Preservation) ---
 async function renderPdfToCanvas() {
     if (!rawFormPdfBuffer) return;
 
-    // Reset current box on zoom change to avoid scaling mismatch
-    selectionBox.style.display = 'none';
-    boxCoords = { left: 0, top: 0, width: 0, height: 0 };
+    if (currentRenderTask) {
+        currentRenderTask.cancel();
+    }
+
+    btnZoomIn.disabled = true;
+    btnZoomOut.disabled = true;
     zoomLabel.innerText = `${Math.round(currentZoom * 100)}%`;
 
-    const loadingTask = pdfjsLib.getDocument({ data: rawFormPdfBuffer.slice(0) });
-    const pdf = await loadingTask.promise;
-    const page = await pdf.getPage(1);
+    const oldScale = totalRenderScale;
+    const newScale = (96 / 72) * currentZoom;
 
-    const unscaledViewport = page.getViewport({ scale: 1.0 });
-    
-    // Fit width to standard 560px baseline
-    const baseWidth = Math.min(560, window.innerWidth - 80);
-    baseRenderScale = baseWidth / unscaledViewport.width;
-    totalRenderScale = baseRenderScale * currentZoom;
+    // Rescale selection box if it exists
+    if (boxCoords.width > 0 && oldScale > 0) {
+        const scaleFactor = newScale / oldScale;
+        boxCoords.left *= scaleFactor;
+        boxCoords.top *= scaleFactor;
+        boxCoords.width *= scaleFactor;
+        boxCoords.height *= scaleFactor;
+        updateSelectionBoxDOM();
+    }
 
-    const viewport = page.getViewport({ scale: totalRenderScale });
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
+    totalRenderScale = newScale;
 
-    const ctx = canvas.getContext('2d');
-    await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+    try {
+        const loadingTask = pdfjsLib.getDocument({ data: rawFormPdfBuffer.slice(0) });
+        const pdf = await loadingTask.promise;
+        const page = await pdf.getPage(1);
+
+        const viewport = page.getViewport({ scale: totalRenderScale });
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        currentRenderTask = page.render({ canvasContext: ctx, viewport: viewport });
+        await currentRenderTask.promise;
+    } catch (err) {
+        if (err.name !== 'RenderingCancelledException') {
+            console.error('Render error:', err);
+        }
+    } finally {
+        currentRenderTask = null;
+        btnZoomIn.disabled = currentZoom >= 3.0;
+        btnZoomOut.disabled = currentZoom <= 0.5;
+    }
 }
 
 function resetCanvas() {
+    if (currentRenderTask) {
+        currentRenderTask.cancel();
+        currentRenderTask = null;
+    }
     const ctx = canvas.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     selectionBox.style.display = 'none';
     boxCoords = { left: 0, top: 0, width: 0, height: 0 };
 }
 
-// --- ZOOM CONTROLS ---
+// --- ZOOM BUTTON CONTROLS ---
 btnZoomIn.addEventListener('click', async () => {
-    if (!rawFormPdfBuffer || currentZoom >= 3.0) return;
+    if (!rawFormPdfBuffer || currentZoom >= 3.0 || currentRenderTask) return;
     currentZoom = +(currentZoom + 0.25).toFixed(2);
     await renderPdfToCanvas();
 });
 
 btnZoomOut.addEventListener('click', async () => {
-    if (!rawFormPdfBuffer || currentZoom <= 0.5) return;
+    if (!rawFormPdfBuffer || currentZoom <= 0.5 || currentRenderTask) return;
     currentZoom = +(currentZoom - 0.25).toFixed(2);
     await renderPdfToCanvas();
 });
 
-// --- INTERACTIVE BOUNDING BOX (Mouse Drag) ---
-canvas.addEventListener('mousedown', (e) => {
-    if (!rawFormPdfBuffer) return;
-    const rect = canvas.getBoundingClientRect();
-    startX = e.clientX - rect.left;
-    startY = e.clientY - rect.top;
-    isDrawing = true;
+// --- PANNING LOGIC (Spacebar + Drag OR Middle-Click) ---
+window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' && !e.repeat && document.activeElement !== fieldNameInput) {
+        isSpacePressed = true;
+        canvasViewport.classList.add('panning-ready');
+        e.preventDefault();
+    }
+});
 
-    selectionBox.style.left = `${startX}px`;
-    selectionBox.style.top = `${startY}px`;
-    selectionBox.style.width = '0px';
-    selectionBox.style.height = '0px';
-    selectionBox.style.display = 'block';
+window.addEventListener('keyup', (e) => {
+    if (e.code === 'Space') {
+        isSpacePressed = false;
+        if (currentMode !== InteractionMode.PANNING) {
+            canvasViewport.classList.remove('panning-ready', 'is-panning');
+        }
+    }
+});
+
+// --- UNIFIED CANVAS & BOX POINTER EVENTS ---
+canvasViewport.addEventListener('mousedown', (e) => {
+    if (!rawFormPdfBuffer) return;
+
+    // Mode: Viewport Panning (Spacebar or Middle Click)
+    if (isSpacePressed || e.button === 1) {
+        currentMode = InteractionMode.PANNING;
+        panStart = {
+            x: e.clientX,
+            y: e.clientY,
+            scrollLeft: canvasViewport.scrollLeft,
+            scrollTop: canvasViewport.scrollTop
+        };
+        canvasViewport.classList.add('is-panning');
+        e.preventDefault();
+        return;
+    }
+
+    if (e.button !== 0) return; // Only process left-clicks below
+
+    const handleEl = e.target.closest('.handle');
+    const isBoxClick = e.target === selectionBox;
+    const canvasRect = canvas.getBoundingClientRect();
+
+    dragStart = { x: e.clientX, y: e.clientY };
+    origBox = { ...boxCoords };
+
+    if (handleEl) {
+        // Mode: Resizing Box via Handle
+        currentMode = InteractionMode.RESIZING;
+        activeHandle = handleEl.dataset.handle;
+        e.stopPropagation();
+    } else if (isBoxClick) {
+        // Mode: Moving Box
+        currentMode = InteractionMode.MOVING;
+        e.stopPropagation();
+    } else if (e.target === canvas) {
+        // Mode: Drawing Brand New Box
+        currentMode = InteractionMode.DRAWING;
+        const startX = Math.max(0, Math.min(e.clientX - canvasRect.left, canvas.width));
+        const startY = Math.max(0, Math.min(e.clientY - canvasRect.top, canvas.height));
+
+        boxCoords = { left: startX, top: startY, width: 0, height: 0 };
+        updateSelectionBoxDOM();
+    }
 });
 
 window.addEventListener('mousemove', (e) => {
-    if (!isDrawing) return;
-    const rect = canvas.getBoundingClientRect();
-    const currentX = Math.max(0, Math.min(e.clientX - rect.left, canvas.width));
-    const currentY = Math.max(0, Math.min(e.clientY - rect.top, canvas.height));
+    if (currentMode === InteractionMode.IDLE) return;
 
-    const left = Math.min(startX, currentX);
-    const top = Math.min(startY, currentY);
-    const width = Math.abs(currentX - startX);
-    const height = Math.abs(currentY - startY);
+    // Handle Viewport Panning
+    if (currentMode === InteractionMode.PANNING) {
+        const dx = e.clientX - panStart.x;
+        const dy = e.clientY - panStart.y;
+        canvasViewport.scrollLeft = panStart.scrollLeft - dx;
+        canvasViewport.scrollTop = panStart.scrollTop - dy;
+        return;
+    }
 
-    boxCoords = { left, top, width, height };
+    const canvasRect = canvas.getBoundingClientRect();
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
+    const minSize = 12;
 
-    selectionBox.style.left = `${left}px`;
-    selectionBox.style.top = `${top}px`;
-    selectionBox.style.width = `${width}px`;
-    selectionBox.style.height = `${height}px`;
+    if (currentMode === InteractionMode.MOVING) {
+        // Clamp Translation to Canvas Bounds
+        const maxLeft = canvas.width - origBox.width;
+        const maxTop = canvas.height - origBox.height;
+        boxCoords.left = Math.max(0, Math.min(origBox.left + dx, maxLeft));
+        boxCoords.top = Math.max(0, Math.min(origBox.top + dy, maxTop));
+        updateSelectionBoxDOM();
+    } 
+    else if (currentMode === InteractionMode.RESIZING) {
+        let { left, top, width, height } = origBox;
+
+        // Directional delta mapping
+        if (activeHandle.includes('e')) {
+            width = Math.max(minSize, Math.min(origBox.width + dx, canvas.width - left));
+        }
+        if (activeHandle.includes('s')) {
+            height = Math.max(minSize, Math.min(origBox.height + dy, canvas.height - top));
+        }
+        if (activeHandle.includes('w')) {
+            const proposedLeft = Math.max(0, Math.min(origBox.left + dx, origBox.left + origBox.width - minSize));
+            width = origBox.width - (proposedLeft - origBox.left);
+            left = proposedLeft;
+        }
+        if (activeHandle.includes('n')) {
+            const proposedTop = Math.max(0, Math.min(origBox.top + dy, origBox.top + origBox.height - minSize));
+            height = origBox.height - (proposedTop - origBox.top);
+            top = proposedTop;
+        }
+
+        boxCoords = { left, top, width, height };
+        updateSelectionBoxDOM();
+    } 
+    else if (currentMode === InteractionMode.DRAWING) {
+        const currentX = Math.max(0, Math.min(e.clientX - canvasRect.left, canvas.width));
+        const currentY = Math.max(0, Math.min(e.clientY - canvasRect.top, canvas.height));
+
+        const left = Math.min(boxCoords.left, currentX);
+        const top = Math.min(boxCoords.top, currentY);
+        const width = Math.abs(currentX - (dragStart.x - canvasRect.left));
+        const height = Math.abs(currentY - (dragStart.y - canvasRect.top));
+
+        boxCoords = { left, top, width, height };
+        updateSelectionBoxDOM();
+    }
 });
 
 window.addEventListener('mouseup', () => {
-    isDrawing = false;
+    if (currentMode === InteractionMode.PANNING) {
+        currentMode = InteractionMode.IDLE;
+        if (!isSpacePressed) {
+            canvasViewport.classList.remove('panning-ready', 'is-panning');
+        } else {
+            canvasViewport.classList.remove('is-panning');
+        }
+        return;
+    }
+
+    if (currentMode === InteractionMode.DRAWING) {
+        // Clean up accidental clicks
+        if (boxCoords.width < 10 || boxCoords.height < 10) {
+            selectionBox.style.display = 'none';
+            boxCoords = { left: 0, top: 0, width: 0, height: 0 };
+        }
+    }
+
+    currentMode = InteractionMode.IDLE;
+    activeHandle = null;
 });
+
+function updateSelectionBoxDOM() {
+    selectionBox.style.left = `${boxCoords.left}px`;
+    selectionBox.style.top = `${boxCoords.top}px`;
+    selectionBox.style.width = `${boxCoords.width}px`;
+    selectionBox.style.height = `${boxCoords.height}px`;
+    selectionBox.style.display = 'block';
+}
 
 // --- ACROFORM INJECTION (pdf-lib) ---
 btnApplyField.addEventListener('click', async () => {
@@ -240,21 +426,14 @@ btnApplyField.addEventListener('click', async () => {
         return;
     }
     if (boxCoords.width < 5 || boxCoords.height < 5) {
-        alert("Please click and drag a box on the document to position the field.");
-        return;
-    }
-
-    const lib = window.PDFLib;
-    if (!lib) {
-        alert("PDFLib library failed to load from CDN. Please check your network or ad blocker.");
+        alert("Please draw and position a field box on the document.");
         return;
     }
 
     try {
-        statusBar.innerText = `> SYSTEM: INJECTING ACROFORM FIELD...`;
-        statusBar.style.color = '#58a6ff';
+        const lib = await getPDFLib();
 
-        // Translate Screen Pixels -> Unscaled PDF Points
+        // Screen Pixels -> Unscaled Inverted PDF Points
         const pdfX = boxCoords.left / totalRenderScale;
         const pdfWidth = boxCoords.width / totalRenderScale;
         const pdfHeight = boxCoords.height / totalRenderScale;
@@ -282,15 +461,11 @@ btnApplyField.addEventListener('click', async () => {
         const modifiedPdfBytes = await pdfDoc.save();
         triggerDownload(modifiedPdfBytes, `${cleanName}_form.pdf`);
 
-        statusBar.innerText = `> SYSTEM: FIELD INJECTED. FILE DOWNLOADED.`;
-        statusBar.style.color = '#238636';
-
         selectionBox.style.display = 'none';
         boxCoords = { left: 0, top: 0, width: 0, height: 0 };
     } catch (err) {
         console.error(err);
-        statusBar.innerText = `> ERROR: FAILED TO INJECT FIELD. ${err.message}`;
-        statusBar.style.color = '#f85149';
+        alert(`Failed to inject field: ${err.message}`);
     }
 });
 
