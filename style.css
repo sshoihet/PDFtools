@@ -273,3 +273,47 @@ body {
     display: none;
     pointer-events: none;
 }
+
+/* --- SELECTION BOX & TRANSFORM HANDLES --- */
+#selectionBox {
+    position: absolute;
+    border: 1.5px solid var(--accent);
+    background: rgba(35, 134, 54, 0.2);
+    display: none;
+    cursor: move;
+    box-sizing: border-box;
+    pointer-events: all; /* Enable mouse interaction */
+}
+
+.handle {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    background: #ffffff;
+    border: 1.5px solid var(--accent);
+    border-radius: 2px;
+    box-sizing: border-box;
+}
+
+.handle-nw { top: -4px; left: -4px; cursor: nwse-resize; }
+.handle-n  { top: -4px; left: calc(50% - 4px); cursor: ns-resize; }
+.handle-ne { top: -4px; right: -4px; cursor: nesw-resize; }
+.handle-e  { top: calc(50% - 4px); right: -4px; cursor: ew-resize; }
+.handle-se { bottom: -4px; right: -4px; cursor: nwse-resize; }
+.handle-s  { bottom: -4px; left: calc(50% - 4px); cursor: ns-resize; }
+.handle-sw { bottom: -4px; left: -4px; cursor: nesw-resize; }
+.handle-w  { top: calc(50% - 4px); left: -4px; cursor: ew-resize; }
+
+/* --- PANNING STATES --- */
+.editor-viewport.panning-ready,
+.editor-viewport.panning-ready #canvasWrapper,
+.editor-viewport.panning-ready #selectionBox {
+    cursor: grab !important;
+}
+
+.editor-viewport.is-panning,
+.editor-viewport.is-panning #canvasWrapper,
+.editor-viewport.is-panning #selectionBox {
+    cursor: grabbing !important;
+    user-select: none;
+}
