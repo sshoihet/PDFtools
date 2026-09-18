@@ -7,9 +7,9 @@
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="style.css">
     
-    <!-- Native PDF Rendering and AcroForm Manipulation -->
+<!-- PDF Rendering & Manipulation Engines (CDNJS) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script src="https://unpkg.com/pdf-lib@1.17.9/dist/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.9/pdf-lib.min.js"></script>
 </head>
 <body>
 
@@ -39,14 +39,25 @@
 
         <!-- FORM FIELD WORKSPACE -->
         <div id="formWorkspace" style="display: none; margin-top: 20px;">
-            <div style="display: flex; gap: 10px; margin-bottom: 12px; justify-content: center;">
-                <input type="text" id="fieldNameInput" placeholder="Field Name (e.g., Customer_Project)" style="padding: 8px; background: var(--surface); border: 1px solid var(--border); color: white; border-radius: 4px; font-family: var(--mono); width: 280px;">
+            <div style="display: flex; gap: 10px; margin-bottom: 12px; justify-content: center; align-items: center; flex-wrap: wrap;">
+                <input type="text" id="fieldNameInput" placeholder="Field Name (e.g., Customer_Project)" style="padding: 8px; background: var(--surface); border: 1px solid var(--border); color: white; border-radius: 4px; font-family: var(--mono); width: 220px;">
+                
+                <!-- Zoom Controls -->
+                <div class="zoom-controls">
+                    <button id="btnZoomOut" class="mode-btn" type="button" title="Zoom Out">−</button>
+                    <span id="zoomLabel">100%</span>
+                    <button id="btnZoomIn" class="mode-btn" type="button" title="Zoom In">+</button>
+                </div>
+
                 <button id="btnApplyField" class="mode-btn" style="background: var(--accent); color: white; border-color: var(--accent);">INJECT FIELD</button>
             </div>
             
-            <div id="canvasContainer" style="position: relative; display: inline-block; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; background: #000;">
-                <canvas id="pdfCanvas" style="display: block;"></canvas>
-                <div id="selectionBox" style="position: absolute; border: 2px dashed #238636; background: rgba(35, 134, 54, 0.25); display: none; pointer-events: none;"></div>
+            <!-- Scrollable Viewport -->
+            <div id="canvasViewport">
+                <div id="canvasWrapper">
+                    <canvas id="pdfCanvas"></canvas>
+                    <div id="selectionBox"></div>
+                </div>
             </div>
         </div>
 
