@@ -221,22 +221,49 @@ body {
     pointer-events: auto;
 }
 
-/* --- FIELD EDITOR WORKSPACE --- */
-#canvasContainer {
-    position: relative;
-    display: inline-block;
+/* --- FIELD EDITOR WORKSPACE & ZOOM --- */
+.zoom-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: #000;
-    cursor: crosshair;
-    margin-top: 10px;
+    padding: 2px 6px;
+}
+
+.zoom-controls .mode-btn {
+    padding: 2px 8px;
+    font-size: 14px;
+    line-height: 1;
+}
+
+#zoomLabel {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+    min-width: 42px;
+    text-align: center;
+}
+
+#canvasViewport {
+    position: relative;
     max-width: 100%;
+    max-height: 65vh;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #000;
+}
+
+#canvasWrapper {
+    position: relative;
+    display: inline-block;
+    cursor: crosshair;
 }
 
 #pdfCanvas {
     display: block;
-    max-width: 100%;
-    height: auto;
 }
 
 #selectionBox {
