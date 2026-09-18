@@ -453,31 +453,47 @@ btnApplyField.addEventListener('click', async () => {
 
     try {
         const lib = await getPDFLib();
-
-        const pdfX = boxCoords.left / totalRenderScale;
-        const pdfWidth = boxCoords.width / totalRenderScale;
-        const pdfHeight = boxCoords.height / totalRenderScale;
-        const pdfY = (canvas.height - (boxCoords.top + boxCoords.height)) / totalRenderScale;
-
-        const { PDFDocument, rgb } = lib;
+        const { PDFDocument, rgb, degrees } = lib;
         const pdfDoc = await PDFDocument.load(rawFormPdfBuffer.slice(0));
         const page = pdfDoc.getPages()[0];
         const form = pdfDoc.getForm();
 
+        // 1. Preserve Original Visual Page Orientation
+        const pageRotation = loadedPdfPage.rotate || 0;
+        page.setRotation(degrees(pageRotation));
+
+        // 2. Transform Screen Pixels -> Exact PDF Point Geometry via PDF.js Matrix
+        const viewport = loadedPdfPage.getViewport({ scale: totalRenderScale });
+        const [x1, y1] = viewport.convertToPdfPoint(boxCoords.left, boxCoords.top);
+        const [x2, y2] = viewport.convertToPdfPoint(
+            boxCoords.left + boxCoords.width, 
+            boxCoords.top + boxCoords.height
+        );
+
+        const pdfX = Math.min(x1, x2);
+        const pdfY = Math.min(y1, y2);
+        const pdfWidth = Math.abs(x1 - x2);
+        const pdfHeight = Math.abs(y1 - y2);
+
+        // 3. Clean Field Identifier
         const rawName = fieldNameInput.value.trim() || `Field_${Date.now()}`;
         const cleanName = rawName.replace(/[^a-zA-Z0-9_]/g, '_');
 
+        // 4. Create Borderless, Black, Helvetica 12 Field
         const textField = form.createTextField(cleanName);
         textField.addToPage(page, {
             x: pdfX,
             y: pdfY,
             width: pdfWidth,
             height: pdfHeight,
-            borderWidth: 1,
-            borderColor: rgb(0.2, 0.4, 0.8),
+            borderWidth: 0,              // Eliminates visible box outline
+            textColor: rgb(0, 0, 0),     // Solid black text
+            rotate: degrees(pageRotation) // Aligns text baseline with page orientation
         });
-        textField.setFontSize(10);
 
+        textField.setFontSize(12);       // Sets 12pt Helvetica font scale
+
+        // 5. Serialize and Trigger Download
         const modifiedPdfBytes = await pdfDoc.save();
         triggerDownload(modifiedPdfBytes, `${cleanName}_form.pdf`);
 
