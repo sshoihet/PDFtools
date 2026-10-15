@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -52,7 +51,7 @@
 
     <!-- FULL-SCREEN FIELD EDITOR STUDIO -->
     <div id="formWorkspace" class="editor-fullscreen" style="display: none;">
-        <!-- Sticky Top Toolbar -->
+        <!-- Top Toolbar -->
         <div class="editor-topbar">
             <div class="topbar-left">
                 <button id="btnExitEditor" class="mode-btn" type="button">← EXIT TO MERGE/SPLIT</button>
@@ -60,7 +59,6 @@
             </div>
 
             <div class="topbar-center">
-                <input type="text" id="fieldNameInput" placeholder="Field Name (e.g., Customer_Project)" autocomplete="off">
                 <div class="zoom-controls">
                     <button id="btnZoomOut" class="mode-btn" type="button" title="Zoom Out">−</button>
                     <span id="zoomLabel">200%</span>
@@ -70,35 +68,116 @@
 
             <div class="topbar-right">
                 <button id="btnOpenBatch" class="mode-btn" type="button" style="border-color: #58a6ff; color: #58a6ff;">BATCH APPLY...</button>
-                <button id="btnApplyField" class="mode-btn btn-inject" type="button">INJECT (THIS FILE)</button>
+                <button id="btnExportPdf" class="mode-btn btn-inject" type="button">EXPORT PDF (0 FIELDS)</button>
             </div>
         </div>
 
-        <!-- Full-Page Scrollable Viewport -->
-        <div id="canvasViewport" class="editor-viewport">
-            <!-- Dedicated Drop Target for Editor -->
-            <div id="editorDropZone" class="editor-dropzone">
-                <div class="drop-zone-content">
-                    <h3>DROP PLACARD PDF HERE</h3>
-                    <p style="color: #8b949e;">or click to browse</p>
+        <!-- Studio Workspace Body (Stage + Inspector Sidebar) -->
+        <div class="editor-body">
+            <!-- Scrollable Viewport -->
+            <div id="canvasViewport" class="editor-viewport">
+                <!-- Drop Target for Template Placard -->
+                <div id="editorDropZone" class="editor-dropzone">
+                    <div class="drop-zone-content">
+                        <h3>DROP PLACARD PDF HERE</h3>
+                        <p style="color: #8b949e;">or click to browse</p>
+                    </div>
+                    <input type="file" id="editorFileInput" accept=".pdf" style="display: none;">
                 </div>
-                <input type="file" id="editorFileInput" accept=".pdf" style="display: none;">
+
+                <!-- Canvas Wrapper -->
+                <div id="canvasWrapper" style="display: none;">
+                    <canvas id="pdfCanvas"></canvas>
+                    <div id="stagedBoxesLayer"></div>
+                    <div id="selectionBox">
+                        <div class="handle handle-nw" data-handle="nw"></div>
+                        <div class="handle handle-n"  data-handle="n"></div>
+                        <div class="handle handle-ne" data-handle="ne"></div>
+                        <div class="handle handle-e"  data-handle="e"></div>
+                        <div class="handle handle-se" data-handle="se"></div>
+                        <div class="handle handle-s"  data-handle="s"></div>
+                        <div class="handle handle-sw" data-handle="sw"></div>
+                        <div class="handle handle-w"  data-handle="w"></div>
+                    </div>
+                </div>
             </div>
 
-            <!-- Canvas Wrapper with 8 Transform Handles -->
-            <div id="canvasWrapper" style="display: none;">
-                <canvas id="pdfCanvas"></canvas>
-                <div id="selectionBox">
-                    <div class="handle handle-nw" data-handle="nw"></div>
-                    <div class="handle handle-n"  data-handle="n"></div>
-                    <div class="handle handle-ne" data-handle="ne"></div>
-                    <div class="handle handle-e"  data-handle="e"></div>
-                    <div class="handle handle-se" data-handle="se"></div>
-                    <div class="handle handle-s"  data-handle="s"></div>
-                    <div class="handle handle-sw" data-handle="sw"></div>
-                    <div class="handle handle-w"  data-handle="w"></div>
+            <!-- Right Inspector Sidebar -->
+            <aside id="editorSidebar" class="editor-sidebar">
+                <div class="sidebar-header">
+                    <span class="sidebar-title">FIELD PROPERTIES</span>
+                    <button id="btnNewField" class="mode-btn" type="button">+ NEW FIELD</button>
                 </div>
-            </div>
+
+                <!-- Empty State -->
+                <div id="sidebarEmptyState" class="sidebar-empty">
+                    Draw a box on the document or select an existing field to edit properties.
+                </div>
+
+                <!-- Field Inspector Controls -->
+                <div id="sidebarFieldControls" class="sidebar-form" style="display: none;">
+                    <div class="form-group">
+                        <label for="fieldNameInput">FIELD NAME</label>
+                        <input type="text" id="fieldNameInput" placeholder="e.g. Customer_Project" autocomplete="off">
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group" style="flex: 1;">
+                            <label for="fieldFontSize">FONT SIZE</label>
+                            <select id="fieldFontSize">
+                                <option value="8">8 pt</option>
+                                <option value="9">9 pt</option>
+                                <option value="10">10 pt</option>
+                                <option value="11">11 pt</option>
+                                <option value="12" selected>12 pt</option>
+                                <option value="14">14 pt</option>
+                                <option value="16">16 pt</option>
+                                <option value="18">18 pt</option>
+                                <option value="24">24 pt</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex: 1;">
+                            <label for="fieldFontFamily">FONT FAMILY</label>
+                            <select id="fieldFontFamily">
+                                <option value="Helvetica" selected>Helvetica</option>
+                                <option value="TimesRoman">Times Roman</option>
+                                <option value="Courier">Courier</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group" style="flex: 1;">
+                            <label for="fieldAlignment">ALIGNMENT</label>
+                            <select id="fieldAlignment">
+                                <option value="Left" selected>Left</option>
+                                <option value="Center">Center</option>
+                                <option value="Right">Right</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex: 1;">
+                            <label for="fieldColor">TEXT COLOR</label>
+                            <select id="fieldColor">
+                                <option value="black" selected>Black</option>
+                                <option value="blue">Blue</option>
+                                <option value="red">Red</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button id="btnDeleteField" class="btn-delete" type="button">DELETE FIELD</button>
+                </div>
+
+                <!-- Staged Fields Layer List -->
+                <div class="sidebar-layers">
+                    <span class="sidebar-section-title">STAGED FIELDS</span>
+                    <div id="fieldsList" class="fields-list-container">
+                        <!-- Rendered by JS -->
+                    </div>
+                </div>
+            </aside>
         </div>
     </div>
 
@@ -112,8 +191,8 @@
             
             <div class="batch-modal-body">
                 <div class="batch-summary">
-                    <div><span class="batch-summary-lbl">FIELD:</span> <strong id="batchSummaryName" style="color: #58a6ff;">--</strong></div>
-                    <div><span class="batch-summary-lbl">STYLE:</span> <span>Helvetica 12pt Black (Borderless)</span></div>
+                    <div><span class="batch-summary-lbl">STAGED FIELDS:</span> <strong id="batchSummaryInfo" style="color: #58a6ff;">0 Fields</strong></div>
+                    <div><span class="batch-summary-lbl">STYLE:</span> <span>Borderless / Visual Horizon Aligned</span></div>
                 </div>
 
                 <div id="batchDropZone" class="batch-dropzone">
@@ -153,5 +232,3 @@
     <script type="module" src="./main.js"></script>
 </body>
 </html>
-
-```
