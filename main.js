@@ -15,28 +15,40 @@ const btnModeForm = document.getElementById('btnModeForm');
 const splitControls = document.getElementById('splitControls');
 const jobNameInput = document.getElementById('jobNameInput');
 
-// Full-Page Studio Elements
+// Full-Page Studio
 const formWorkspace = document.getElementById('formWorkspace');
 const btnExitEditor = document.getElementById('btnExitEditor');
 const editorDropZone = document.getElementById('editorDropZone');
 const editorFileInput = document.getElementById('editorFileInput');
 const canvasViewport = document.getElementById('canvasViewport');
 const canvasWrapper = document.getElementById('canvasWrapper');
-const fieldNameInput = document.getElementById('fieldNameInput');
-const btnApplyField = document.getElementById('btnApplyField');
 const btnOpenBatch = document.getElementById('btnOpenBatch');
+const btnExportPdf = document.getElementById('btnExportPdf');
 const btnZoomIn = document.getElementById('btnZoomIn');
 const btnZoomOut = document.getElementById('btnZoomOut');
 const zoomLabel = document.getElementById('zoomLabel');
 const canvas = document.getElementById('pdfCanvas');
 const selectionBox = document.getElementById('selectionBox');
+const stagedBoxesLayer = document.getElementById('stagedBoxesLayer');
 
-// Batch Modal Elements
+// Sidebar Inspector
+const btnNewField = document.getElementById('btnNewField');
+const sidebarEmptyState = document.getElementById('sidebarEmptyState');
+const sidebarFieldControls = document.getElementById('sidebarFieldControls');
+const fieldNameInput = document.getElementById('fieldNameInput');
+const fieldFontSize = document.getElementById('fieldFontSize');
+const fieldFontFamily = document.getElementById('fieldFontFamily');
+const fieldAlignment = document.getElementById('fieldAlignment');
+const fieldColor = document.getElementById('fieldColor');
+const btnDeleteField = document.getElementById('btnDeleteField');
+const fieldsList = document.getElementById('fieldsList');
+
+// Batch Modal
 const batchModal = document.getElementById('batchModal');
 const btnBatchClose = document.getElementById('btnBatchClose');
 const btnBatchCancel = document.getElementById('btnBatchCancel');
 const btnBatchExecute = document.getElementById('btnBatchExecute');
-const batchSummaryName = document.getElementById('batchSummaryName');
+const batchSummaryInfo = document.getElementById('batchSummaryInfo');
 const batchDropZone = document.getElementById('batchDropZone');
 const batchFileInput = document.getElementById('batchFileInput');
 const batchCountLabel = document.getElementById('batchCountLabel');
@@ -62,6 +74,11 @@ let currentZoom = 2.0;
 let totalRenderScale = 0;
 let currentRenderTask = null;
 
+// Multi-Field Pipeline State
+// vx, vy, vw, vh are stored in unscaled PDF points (1/72 in) measured from the VISUAL top-left corner
+let stagedFields = [];
+let activeFieldId = null;
+
 // Interaction State Machine
 const InteractionMode = {
     IDLE: 'IDLE',
@@ -73,7 +90,7 @@ const InteractionMode = {
 let currentMode = InteractionMode.IDLE;
 let isSpacePressed = false;
 
-// Geometry Buffers
+// Interaction Buffers (Screen pixels on the active canvas)
 let boxCoords = { left: 0, top: 0, width: 0, height: 0 };
 let origBox = { left: 0, top: 0, width: 0, height: 0 };
 let dragStart = { x: 0, y: 0 };
@@ -83,7 +100,7 @@ let panStart = { x: 0, y: 0, scrollLeft: 0, scrollTop: 0 };
 // Batch Queue State
 let batchTargetFiles = [];
 
-// PDF.js Worker Configuration
+// PDF.js Worker Setup
 if (window.pdfjsLib) {
     pdfjsLib.GlobalWorkerOptions.workerSrc = 
         'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -138,10 +155,15 @@ function setMode(mode) {
     appMode = mode;
     selectedFiles = [];
     rawFormPdfBuffer = null;
+    rawFormFileName = '';
     cleanupPdfDoc();
+    stagedFields = [];
+    activeFieldId = null;
     currentZoom = 2.0;
+
     renderFileList();
     resetCanvas();
+    syncSidebar();
 
     if (btnModeMerge) btnModeMerge.classList.toggle('active', mode === 'MERGE');
     if (btnModeSplit) btnModeSplit.classList.toggle('active', mode === 'SPLIT');
@@ -168,7 +190,7 @@ if (btnModeSplit) btnModeSplit.onclick = () => setMode('SPLIT');
 if (btnModeForm) btnModeForm.onclick = () => setMode('FORM');
 if (btnExitEditor) btnExitEditor.onclick = () => setMode('MERGE');
 
-// --- FILE INPUT HANDLING ---
+// --- FILE INPUT HANDLING (Standard Modes) ---
 dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
 dropZone.addEventListener('click', () => fileInput.click());
@@ -180,6 +202,7 @@ dropZone.addEventListener('drop', (e) => {
     handleFiles(e.dataTransfer.files);
 });
 
+// --- FILE INPUT HANDLING (Studio Template Placard) ---
 editorDropZone.addEventListener('dragover', (e) => { e.preventDefault(); });
 editorDropZone.addEventListener('click', () => editorFileInput.click());
 editorFileInput.addEventListener('change', (e) => handleFormFile(e.target.files[0]));
@@ -205,6 +228,8 @@ async function handleFormFile(file) {
     cleanupPdfDoc();
     rawFormFileName = file.name;
     rawFormPdfBuffer = await file.arrayBuffer();
+    stagedFields = [];
+    activeFieldId = null;
     currentZoom = 2.0;
 
     editorDropZone.style.display = 'none';
@@ -216,6 +241,7 @@ async function handleFormFile(file) {
 
     totalRenderScale = (96 / 72) * currentZoom;
     await renderCachedPage();
+    syncSidebar();
 }
 
 function cleanupPdfDoc() {
@@ -226,7 +252,7 @@ function cleanupPdfDoc() {
     }
 }
 
-// --- FAST CANVAS RENDERING ---
+// --- FAST CANVAS RENDERING & STAGED BOX RE-PROJECTION ---
 async function renderCachedPage() {
     if (!loadedPdfPage) return;
 
@@ -240,19 +266,7 @@ async function renderCachedPage() {
     btnZoomOut.disabled = true;
     zoomLabel.innerText = `${Math.round(currentZoom * 100)}%`;
 
-    const oldScale = totalRenderScale;
-    const newScale = (96 / 72) * currentZoom;
-
-    if (boxCoords.width > 0 && oldScale > 0) {
-        const scaleFactor = newScale / oldScale;
-        boxCoords.left *= scaleFactor;
-        boxCoords.top *= scaleFactor;
-        boxCoords.width *= scaleFactor;
-        boxCoords.height *= scaleFactor;
-        updateSelectionBoxDOM();
-    }
-
-    totalRenderScale = newScale;
+    totalRenderScale = (96 / 72) * currentZoom;
 
     try {
         const viewport = loadedPdfPage.getViewport({ scale: totalRenderScale });
@@ -265,6 +279,10 @@ async function renderCachedPage() {
 
         currentRenderTask = loadedPdfPage.render({ canvasContext: ctx, viewport: viewport });
         await currentRenderTask.promise;
+
+        // Project invariant visual PDF points back to screen pixels on new canvas scale
+        renderStagedBoxesDOM();
+        updateActiveSelectionBox();
     } catch (err) {
         if (err.name !== 'RenderingCancelledException') {
             console.error('Render error:', err);
@@ -285,7 +303,7 @@ function resetCanvas() {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     selectionBox.style.display = 'none';
-    boxCoords = { left: 0, top: 0, width: 0, height: 0 };
+    stagedBoxesLayer.innerHTML = '';
     totalRenderScale = 0;
 }
 
@@ -304,7 +322,7 @@ btnZoomOut.addEventListener('click', async () => {
 
 // --- PANNING LOGIC ---
 window.addEventListener('keydown', (e) => {
-    if (e.code === 'Space' && !e.repeat && document.activeElement !== fieldNameInput) {
+    if (e.code === 'Space' && !e.repeat && document.activeElement.tagName !== 'INPUT') {
         isSpacePressed = true;
         canvasViewport.classList.add('panning-ready');
         e.preventDefault();
@@ -340,7 +358,8 @@ canvasViewport.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
 
     const handleEl = e.target.closest('.handle');
-    const isBoxClick = e.target === selectionBox;
+    const isSelectionBox = e.target === selectionBox;
+    const placedBoxEl = e.target.closest('.placed-field-box');
     const canvasRect = canvas.getBoundingClientRect();
 
     dragStart = { x: e.clientX, y: e.clientY };
@@ -350,16 +369,27 @@ canvasViewport.addEventListener('mousedown', (e) => {
         currentMode = InteractionMode.RESIZING;
         activeHandle = handleEl.dataset.handle;
         e.stopPropagation();
-    } else if (isBoxClick) {
+    } else if (isSelectionBox) {
         currentMode = InteractionMode.MOVING;
         e.stopPropagation();
+    } else if (placedBoxEl) {
+        // Select an existing placed field
+        const id = placedBoxEl.dataset.id;
+        setActiveField(id);
+        currentMode = InteractionMode.MOVING;
+        origBox = { ...boxCoords };
+        e.stopPropagation();
     } else if (e.target === canvas) {
+        // Start drawing a fresh box
         currentMode = InteractionMode.DRAWING;
         const startX = Math.max(0, Math.min(e.clientX - canvasRect.left, canvas.width));
         const startY = Math.max(0, Math.min(e.clientY - canvasRect.top, canvas.height));
 
         boxCoords = { left: startX, top: startY, width: 0, height: 0 };
+        activeFieldId = null;
+        renderStagedBoxesDOM();
         updateSelectionBoxDOM();
+        syncSidebar();
     }
 });
 
@@ -426,9 +456,37 @@ window.addEventListener('mouseup', () => {
     }
 
     if (currentMode === InteractionMode.DRAWING) {
-        if (boxCoords.width < 10 || boxCoords.height < 10) {
+        if (boxCoords.width >= 12 && boxCoords.height >= 12 && totalRenderScale > 0) {
+            // Commit new field using invariant visual PDF point coordinates
+            const newId = `field_${Date.now()}`;
+            const count = stagedFields.length + 1;
+            const newField = {
+                id: newId,
+                name: `Field_${count}`,
+                vx: boxCoords.left / totalRenderScale,
+                vy: boxCoords.top / totalRenderScale,
+                vw: boxCoords.width / totalRenderScale,
+                vh: boxCoords.height / totalRenderScale,
+                fontSize: 12,
+                fontFamily: 'Helvetica',
+                alignment: 'Left',
+                color: 'black'
+            };
+            stagedFields.push(newField);
+            setActiveField(newId);
+            fieldNameInput.focus();
+            fieldNameInput.select();
+        } else {
             selectionBox.style.display = 'none';
-            boxCoords = { left: 0, top: 0, width: 0, height: 0 };
+        }
+    } else if (currentMode === InteractionMode.MOVING || currentMode === InteractionMode.RESIZING) {
+        const active = getActiveField();
+        if (active && totalRenderScale > 0) {
+            active.vx = boxCoords.left / totalRenderScale;
+            active.vy = boxCoords.top / totalRenderScale;
+            active.vw = boxCoords.width / totalRenderScale;
+            active.vh = boxCoords.height / totalRenderScale;
+            renderStagedBoxesDOM();
         }
     }
 
@@ -444,69 +502,277 @@ function updateSelectionBoxDOM() {
     selectionBox.style.display = 'block';
 }
 
-// --- HELPER: GET CURRENT FIELD GEOMETRY IN PDF POINTS ---
-function getFieldGeometry() {
-    if (!loadedPdfPage || boxCoords.width < 5 || boxCoords.height < 5) return null;
+// --- STAGED BOX RENDERING & SELECTION ---
+function renderStagedBoxesDOM() {
+    stagedBoxesLayer.innerHTML = '';
+    stagedFields.forEach((f) => {
+        if (f.id === activeFieldId) return;
 
-    const viewport = loadedPdfPage.getViewport({ scale: totalRenderScale });
-    const [x1, y1] = viewport.convertToPdfPoint(boxCoords.left, boxCoords.top);
-    const [x2, y2] = viewport.convertToPdfPoint(
-        boxCoords.left + boxCoords.width, 
-        boxCoords.top + boxCoords.height
-    );
+        const left = f.vx * totalRenderScale;
+        const top = f.vy * totalRenderScale;
+        const width = f.vw * totalRenderScale;
+        const height = f.vh * totalRenderScale;
 
-    return {
-        x: Math.min(x1, x2),
-        y: Math.min(y1, y2),
-        width: Math.abs(x1 - x2),
-        height: Math.abs(y1 - y2),
-        pageRotation: loadedPdfPage.rotate || 0,
-        name: (fieldNameInput.value.trim() || `Field_${Date.now()}`).replace(/[^a-zA-Z0-9_]/g, '_')
-    };
+        const el = document.createElement('div');
+        el.className = 'placed-field-box';
+        el.dataset.id = f.id;
+        el.style.left = `${left}px`;
+        el.style.top = `${top}px`;
+        el.style.width = `${width}px`;
+        el.style.height = `${height}px`;
+
+        const label = document.createElement('div');
+        label.className = 'placed-field-label';
+        label.innerText = f.name;
+        el.appendChild(label);
+
+        stagedBoxesLayer.appendChild(el);
+    });
 }
 
-// --- SINGLE FILE ACROFORM INJECTION ---
-btnApplyField.addEventListener('click', async () => {
+function updateActiveSelectionBox() {
+    const active = getActiveField();
+    if (!active || totalRenderScale <= 0) {
+        selectionBox.style.display = 'none';
+        return;
+    }
+    boxCoords = {
+        left: active.vx * totalRenderScale,
+        top: active.vy * totalRenderScale,
+        width: active.vw * totalRenderScale,
+        height: active.vh * totalRenderScale
+    };
+    updateSelectionBoxDOM();
+}
+
+function getActiveField() {
+    return stagedFields.find(f => f.id === activeFieldId);
+}
+
+function setActiveField(id) {
+    activeFieldId = id;
+    renderStagedBoxesDOM();
+    updateActiveSelectionBox();
+    syncSidebar();
+}
+
+// --- SIDEBAR SYNCHRONIZATION ---
+function syncSidebar() {
+    const count = stagedFields.length;
+    btnExportPdf.innerText = `EXPORT PDF (${count} FIELD${count === 1 ? '' : 'S'})`;
+    btnExportPdf.disabled = count === 0;
+    btnExportPdf.style.opacity = count > 0 ? '1' : '0.5';
+
+    btnOpenBatch.innerText = `BATCH APPLY (${count})...`;
+    btnOpenBatch.disabled = count === 0;
+    btnOpenBatch.style.opacity = count > 0 ? '1' : '0.5';
+
+    const active = getActiveField();
+
+    if (!active) {
+        sidebarEmptyState.style.display = 'block';
+        sidebarFieldControls.style.display = 'none';
+    } else {
+        sidebarEmptyState.style.display = 'none';
+        sidebarFieldControls.style.display = 'flex';
+
+        fieldNameInput.value = active.name;
+        fieldFontSize.value = active.fontSize;
+        fieldFontFamily.value = active.fontFamily;
+        fieldAlignment.value = active.alignment;
+        fieldColor.value = active.color;
+    }
+
+    // Render Layer List
+    fieldsList.innerHTML = '';
+    stagedFields.forEach((f, idx) => {
+        const item = document.createElement('div');
+        item.className = `field-list-item ${f.id === activeFieldId ? 'selected' : ''}`;
+        item.innerHTML = `
+            <span>${idx + 1}. ${f.name}</span>
+            <span class="field-meta-tag">${f.fontFamily} ${f.fontSize}pt</span>
+        `;
+        item.onclick = () => setActiveField(f.id);
+        fieldsList.appendChild(item);
+    });
+}
+
+// Live Inspector Input Handlers
+fieldNameInput.addEventListener('input', (e) => {
+    const active = getActiveField();
+    if (!active) return;
+    active.name = e.target.value.trim().replace(/[^a-zA-Z0-9_]/g, '_') || 'Field';
+    renderStagedBoxesDOM();
+    syncSidebar();
+});
+
+fieldFontSize.addEventListener('change', (e) => {
+    const active = getActiveField();
+    if (active) { active.fontSize = parseInt(e.target.value, 10); syncSidebar(); }
+});
+
+fieldFontFamily.addEventListener('change', (e) => {
+    const active = getActiveField();
+    if (active) { active.fontFamily = e.target.value; syncSidebar(); }
+});
+
+fieldAlignment.addEventListener('change', (e) => {
+    const active = getActiveField();
+    if (active) { active.alignment = e.target.value; syncSidebar(); }
+});
+
+fieldColor.addEventListener('change', (e) => {
+    const active = getActiveField();
+    if (active) { active.color = e.target.value; syncSidebar(); }
+});
+
+btnDeleteField.addEventListener('click', () => {
+    if (!activeFieldId) return;
+    stagedFields = stagedFields.filter(f => f.id !== activeFieldId);
+    activeFieldId = stagedFields.length > 0 ? stagedFields[stagedFields.length - 1].id : null;
+    renderStagedBoxesDOM();
+    updateActiveSelectionBox();
+    syncSidebar();
+});
+
+btnNewField.addEventListener('click', () => {
+    activeFieldId = null;
+    selectionBox.style.display = 'none';
+    renderStagedBoxesDOM();
+    syncSidebar();
+});
+
+// --- UNIFIED ACROFORM INJECTION ENGINE (TOP-LEFT ANCHOR + BORDER PURGE) ---
+function applyFieldToPage(form, page, fieldDef, pdfDoc, lib, fontMap, colorMap, alignmentMap) {
+    const { PDFName, rgb, degrees } = lib;
+    const rotationAngle = page.getRotation().angle || 0;
+    const pageX = page.getX();
+    const pageY = page.getY();
+    const pageW = page.getWidth();
+    const pageH = page.getHeight();
+
+    const { vx, vy, vw, vh, name, fontSize, fontFamily, alignment, color } = fieldDef;
+
+    let pdfX, pdfY, pdfWidth, pdfHeight;
+
+    // Map visual top-left coordinates to native PDF coordinates based on rotation
+    switch (rotationAngle) {
+        case 90:
+            pdfX = pageX + vy;
+            pdfY = pageY + vx;
+            pdfWidth = vh;
+            pdfHeight = vw;
+            break;
+        case 180:
+            pdfX = pageX + pageW - vx - vw;
+            pdfY = pageY + vy;
+            pdfWidth = vw;
+            pdfHeight = vh;
+            break;
+        case 270:
+            pdfX = pageX + pageW - vy - vh;
+            pdfY = pageY + pageH - vx - vw;
+            pdfWidth = vh;
+            pdfHeight = vw;
+            break;
+        case 0:
+        default:
+            pdfX = pageX + vx;
+            pdfY = pageY + pageH - vy - vh;
+            pdfWidth = vw;
+            pdfHeight = vh;
+            break;
+    }
+
+    page.setRotation(degrees(rotationAngle));
+
+    const textField = form.createTextField(name);
+    textField.addToPage(page, {
+        x: pdfX,
+        y: pdfY,
+        width: pdfWidth,
+        height: pdfHeight,
+        borderWidth: 0,
+        textColor: colorMap[color] || rgb(0, 0, 0),
+        rotate: degrees(rotationAngle)
+    });
+
+    textField.setFontSize(fontSize || 12);
+    textField.setAlignment(alignmentMap[alignment] || lib.TextAlignment.Left);
+
+    const font = fontMap[fontFamily];
+    if (font) {
+        textField.updateAppearances(font);
+    }
+
+    // Tri-Level Border Purge (strips annotation /Border, /BS, and /MK /BC flags)
+    const widgets = textField.acroField.getWidgets();
+    for (const widget of widgets) {
+        widget.dict.set(PDFName.of('Border'), pdfDoc.context.obj([0, 0, 0]));
+        
+        if (widget.getOrCreateBorderStyle) {
+            const bs = widget.getOrCreateBorderStyle();
+            bs.setWidth(0);
+        }
+
+        const mk = widget.dict.lookup(PDFName.of('MK'));
+        if (mk && typeof mk.delete === 'function') {
+            mk.delete(PDFName.of('BC'));
+            mk.delete(PDFName.of('BG'));
+        }
+    }
+
+    return textField;
+}
+
+// --- SINGLE-FILE MULTI-FIELD EXPORT ---
+btnExportPdf.addEventListener('click', async () => {
     if (!rawFormPdfBuffer) {
         alert("Please load a PDF document first.");
         return;
     }
-    const geom = getFieldGeometry();
-    if (!geom) {
-        alert("Please draw and position a field box on the document.");
+    if (stagedFields.length === 0) {
+        alert("Please draw and position at least one field on the document.");
         return;
     }
 
     try {
         const lib = await getPDFLib();
-        const { PDFDocument, rgb, degrees } = lib;
+        const { PDFDocument, rgb, StandardFonts, TextAlignment } = lib;
         const pdfDoc = await PDFDocument.load(rawFormPdfBuffer.slice(0));
         const page = pdfDoc.getPages()[0];
         const form = pdfDoc.getForm();
 
-        page.setRotation(degrees(geom.pageRotation));
+        const fontMap = {
+            'Helvetica': await pdfDoc.embedFont(StandardFonts.Helvetica),
+            'TimesRoman': await pdfDoc.embedFont(StandardFonts.TimesRoman),
+            'Courier': await pdfDoc.embedFont(StandardFonts.Courier)
+        };
 
-        const textField = form.createTextField(geom.name);
-        textField.addToPage(page, {
-            x: geom.x,
-            y: geom.y,
-            width: geom.width,
-            height: geom.height,
-            borderWidth: 0,
-            textColor: rgb(0, 0, 0),
-            rotate: degrees(geom.pageRotation)
+        const colorMap = {
+            'black': rgb(0, 0, 0),
+            'blue': rgb(0.08, 0.38, 0.74),
+            'red': rgb(0.85, 0.15, 0.15)
+        };
+
+        const alignmentMap = {
+            'Left': TextAlignment.Left,
+            'Center': TextAlignment.Center,
+            'Right': TextAlignment.Right
+        };
+
+        // Inject all staged fields in a single pass
+        stagedFields.forEach((field) => {
+            applyFieldToPage(form, page, field, pdfDoc, lib, fontMap, colorMap, alignmentMap);
         });
-        textField.setFontSize(12);
 
         const modifiedPdfBytes = await pdfDoc.save();
         const baseName = (rawFormFileName || 'placard').replace(/\.pdf$/i, '');
         triggerDownload(modifiedPdfBytes, `${baseName}_fillable.pdf`, 'application/pdf');
 
-        selectionBox.style.display = 'none';
-        boxCoords = { left: 0, top: 0, width: 0, height: 0 };
     } catch (err) {
         console.error(err);
-        alert(`Failed to inject field: ${err.message}`);
+        alert(`Failed to export PDF: ${err.message}`);
     }
 });
 
@@ -516,13 +782,12 @@ btnOpenBatch.addEventListener('click', () => {
         alert("Please load a template PDF placard first.");
         return;
     }
-    const geom = getFieldGeometry();
-    if (!geom) {
-        alert("Please draw and position the field box on the template document first.");
+    if (stagedFields.length === 0) {
+        alert("Please draw and configure at least one field on the template document first.");
         return;
     }
 
-    batchSummaryName.innerText = geom.name;
+    batchSummaryInfo.innerText = `${stagedFields.length} Field${stagedFields.length === 1 ? '' : 's'} Configured`;
     batchModal.style.display = 'flex';
     renderBatchFileList();
 });
@@ -530,7 +795,6 @@ btnOpenBatch.addEventListener('click', () => {
 btnBatchClose.onclick = () => { batchModal.style.display = 'none'; };
 btnBatchCancel.onclick = () => { batchModal.style.display = 'none'; };
 
-// Batch Drag-and-Drop & File Selection
 batchDropZone.addEventListener('dragover', (e) => { e.preventDefault(); batchDropZone.classList.add('dragover'); });
 batchDropZone.addEventListener('dragleave', () => batchDropZone.classList.remove('dragover'));
 batchDropZone.addEventListener('click', () => batchFileInput.click());
@@ -579,10 +843,8 @@ window.removeBatchItem = (index) => {
     renderBatchFileList();
 };
 
-// Batch Execution Engine
 btnBatchExecute.addEventListener('click', async () => {
-    const geom = getFieldGeometry();
-    if (!geom || batchTargetFiles.length === 0) return;
+    if (stagedFields.length === 0 || batchTargetFiles.length === 0) return;
 
     btnBatchExecute.disabled = true;
     btnBatchCancel.disabled = true;
@@ -590,9 +852,21 @@ btnBatchExecute.addEventListener('click', async () => {
 
     try {
         const lib = await getPDFLib();
-        const { PDFDocument, rgb, degrees } = lib;
+        const { PDFDocument, rgb, StandardFonts, TextAlignment } = lib;
         const processedZipEntries = [];
         const total = batchTargetFiles.length;
+
+        const colorMap = {
+            'black': rgb(0, 0, 0),
+            'blue': rgb(0.08, 0.38, 0.74),
+            'red': rgb(0.85, 0.15, 0.15)
+        };
+
+        const alignmentMap = {
+            'Left': TextAlignment.Left,
+            'Center': TextAlignment.Center,
+            'Right': TextAlignment.Right
+        };
 
         for (let i = 0; i < total; i++) {
             const file = batchTargetFiles[i];
@@ -600,7 +874,6 @@ btnBatchExecute.addEventListener('click', async () => {
             batchProgressBarFill.style.width = `${pct}%`;
             batchStatusText.innerText = `Processing ${i + 1} of ${total}: ${file.name}`;
 
-            // Yield to browser to keep animation smooth
             await new Promise(r => setTimeout(r, 10));
 
             const arrayBuffer = await file.arrayBuffer();
@@ -608,21 +881,16 @@ btnBatchExecute.addEventListener('click', async () => {
             const page = pdfDoc.getPages()[0];
             const form = pdfDoc.getForm();
 
-            // Match rotation of this specific target document
-            const targetRotation = page.getRotation().angle;
-            page.setRotation(degrees(targetRotation));
+            const fontMap = {
+                'Helvetica': await pdfDoc.embedFont(StandardFonts.Helvetica),
+                'TimesRoman': await pdfDoc.embedFont(StandardFonts.TimesRoman),
+                'Courier': await pdfDoc.embedFont(StandardFonts.Courier)
+            };
 
-            const textField = form.createTextField(geom.name);
-            textField.addToPage(page, {
-                x: geom.x,
-                y: geom.y,
-                width: geom.width,
-                height: geom.height,
-                borderWidth: 0,
-                textColor: rgb(0, 0, 0),
-                rotate: degrees(targetRotation)
+            // Apply all staged fields to this specific batch document
+            stagedFields.forEach((field) => {
+                applyFieldToPage(form, page, field, pdfDoc, lib, fontMap, colorMap, alignmentMap);
             });
-            textField.setFontSize(12);
 
             const modifiedBytes = await pdfDoc.save();
             const outName = file.name.replace(/\.pdf$/i, '_fillable.pdf');
@@ -632,7 +900,6 @@ btnBatchExecute.addEventListener('click', async () => {
         batchStatusText.innerText = `Compressing ${total} files into ZIP...`;
         await new Promise(r => setTimeout(r, 20));
 
-        // Generate uncompressed standard ZIP in-memory
         const zipBytes = createStoreZip(processedZipEntries);
         const zipFilename = batchZipInput.value.trim() || 'batch_placards_forms.zip';
         triggerDownload(zipBytes, zipFilename, 'application/zip');
@@ -700,12 +967,11 @@ function createStoreZip(files) {
 
     let pos = 0;
 
-    // Local headers + payload
     for (const e of entries) {
         view.setUint32(pos, 0x04034b50, true); pos += 4;
         view.setUint16(pos, 20, true); pos += 2;
         view.setUint16(pos, 0, true); pos += 2;
-        view.setUint16(pos, 0, true); pos += 2; // Stored (0% compression)
+        view.setUint16(pos, 0, true); pos += 2;
         view.setUint16(pos, 0, true); pos += 2;
         view.setUint16(pos, 0, true); pos += 2;
         view.setUint32(pos, e.crc, true); pos += 4;
@@ -718,7 +984,6 @@ function createStoreZip(files) {
         zipBuffer.set(e.dataBytes, pos); pos += e.dataBytes.length;
     }
 
-    // Central directory
     for (const e of entries) {
         view.setUint32(pos, 0x02014b50, true); pos += 4;
         view.setUint16(pos, 20, true); pos += 2;
@@ -741,7 +1006,6 @@ function createStoreZip(files) {
         zipBuffer.set(e.nameBytes, pos); pos += e.nameBytes.length;
     }
 
-    // End of Central Directory
     view.setUint32(pos, 0x06054b50, true); pos += 4;
     view.setUint16(pos, 0, true); pos += 2;
     view.setUint16(pos, 0, true); pos += 2;
