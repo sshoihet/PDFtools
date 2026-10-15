@@ -54,6 +54,7 @@ let dragStartIndex;
 
 // Cached Template PDF State
 let rawFormPdfBuffer = null;
+let rawFormFileName = '';
 let loadedPdfDoc = null;
 let loadedPdfPage = null;
 
@@ -202,6 +203,7 @@ async function handleFormFile(file) {
     if (!file || file.type !== 'application/pdf') return;
 
     cleanupPdfDoc();
+    rawFormFileName = file.name;
     rawFormPdfBuffer = await file.arrayBuffer();
     currentZoom = 2.0;
 
@@ -497,7 +499,8 @@ btnApplyField.addEventListener('click', async () => {
         textField.setFontSize(12);
 
         const modifiedPdfBytes = await pdfDoc.save();
-        triggerDownload(modifiedPdfBytes, `${geom.name}_form.pdf`, 'application/pdf');
+        const baseName = (rawFormFileName || 'placard').replace(/\.pdf$/i, '');
+        triggerDownload(modifiedPdfBytes, `${baseName}_fillable.pdf`, 'application/pdf');
 
         selectionBox.style.display = 'none';
         boxCoords = { left: 0, top: 0, width: 0, height: 0 };
@@ -622,7 +625,7 @@ btnBatchExecute.addEventListener('click', async () => {
             textField.setFontSize(12);
 
             const modifiedBytes = await pdfDoc.save();
-            const outName = file.name.replace(/\.pdf$/i, '_form.pdf');
+            const outName = file.name.replace(/\.pdf$/i, '_fillable.pdf');
             processedZipEntries.push({ name: outName, data: modifiedBytes });
         }
 
