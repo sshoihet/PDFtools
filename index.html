@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -68,7 +69,8 @@
             </div>
 
             <div class="topbar-right">
-                <button id="btnApplyField" class="mode-btn btn-inject" type="button">INJECT FIELD</button>
+                <button id="btnOpenBatch" class="mode-btn" type="button" style="border-color: #58a6ff; color: #58a6ff;">BATCH APPLY...</button>
+                <button id="btnApplyField" class="mode-btn btn-inject" type="button">INJECT (THIS FILE)</button>
             </div>
         </div>
 
@@ -83,7 +85,7 @@
                 <input type="file" id="editorFileInput" accept=".pdf" style="display: none;">
             </div>
 
-            <!-- Canvas Wrapper with 8 Handles -->
+            <!-- Canvas Wrapper with 8 Transform Handles -->
             <div id="canvasWrapper" style="display: none;">
                 <canvas id="pdfCanvas"></canvas>
                 <div id="selectionBox">
@@ -100,7 +102,56 @@
         </div>
     </div>
 
+    <!-- BATCH PROCESSING MODAL -->
+    <div id="batchModal" class="batch-modal-overlay" style="display: none;">
+        <div class="batch-modal">
+            <div class="batch-modal-header">
+                <h3>BATCH FIELD INJECTION</h3>
+                <button id="btnBatchClose" class="btn-modal-close" type="button">&times;</button>
+            </div>
+            
+            <div class="batch-modal-body">
+                <div class="batch-summary">
+                    <div><span class="batch-summary-lbl">FIELD:</span> <strong id="batchSummaryName" style="color: #58a6ff;">--</strong></div>
+                    <div><span class="batch-summary-lbl">STYLE:</span> <span>Helvetica 12pt Black (Borderless)</span></div>
+                </div>
+
+                <div id="batchDropZone" class="batch-dropzone">
+                    <p style="margin: 0; font-weight: 600;">DROP TARGET PLACARD PDFS HERE</p>
+                    <p style="margin: 4px 0 0 0; color: #8b949e; font-size: 11px;">or click to select multiple files</p>
+                    <input type="file" id="batchFileInput" multiple accept=".pdf" style="display: none;">
+                </div>
+
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span id="batchCountLabel" class="batch-summary-lbl">0 FILES QUEUED</span>
+                    <button id="btnClearBatch" class="mode-btn" type="button" style="font-size: 10px; padding: 2px 6px; border-color: #f85149; color: #f85149; display: none;">CLEAR</button>
+                </div>
+
+                <div id="batchFileList" class="batch-file-list"></div>
+
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                    <label for="batchZipInput" class="batch-summary-lbl">OUTPUT ARCHIVE NAME</label>
+                    <input type="text" id="batchZipInput" value="batch_placards_forms.zip" style="padding: 6px 10px; background: var(--surface); border: 1px solid var(--border); color: #c9d1d9; border-radius: 4px; font-family: var(--mono); font-size: 12px;">
+                </div>
+
+                <div id="batchProgressContainer" style="display: none;">
+                    <div class="batch-progress-bar">
+                        <div id="batchProgressBarFill" class="batch-progress-fill" style="width: 0%;"></div>
+                    </div>
+                    <div id="batchStatusText" class="batch-status-text">Processing 0/0...</div>
+                </div>
+            </div>
+
+            <div class="batch-modal-footer">
+                <button id="btnBatchCancel" class="mode-btn" type="button">CANCEL</button>
+                <button id="btnBatchExecute" class="mode-btn btn-inject" type="button" disabled>PROCESS &amp; DOWNLOAD ZIP</button>
+            </div>
+        </div>
+    </div>
+
     <!-- MAIN CONTROLLER SCRIPT -->
     <script type="module" src="./main.js"></script>
 </body>
 </html>
+
+```
